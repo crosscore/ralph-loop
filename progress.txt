@@ -1,8 +1,5 @@
 # Ralph Progress Log
 
 ## Codebase Patterns
-- (Add reusable patterns here as you discover them)
 
-## Key Files
-- (List important files for this project)
 ---
