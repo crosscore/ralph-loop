@@ -1,0 +1,9 @@
+# Ralph Progress Log
+Started: 2025-01-14
+
+## Codebase Patterns
+- (Add reusable patterns here as you discover them)
+
+## Key Files
+- (List important files for this project)
+---
