@@ -3,10 +3,18 @@ set -e
 
 # Configuration
 MAX_ITERATIONS=${MAX_ITERATIONS:-10}
+CONTEXT_THRESHOLD=${CONTEXT_THRESHOLD:-20}  # Context window usage threshold (%)
 AGENT_NAME="$1"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+LOGS_DIR="$SCRIPT_DIR/logs"
+
+# Create logs directory if not exists
+mkdir -p "$LOGS_DIR"
+
+# Generate log filename with timestamp
+LOG_FILE="$LOGS_DIR/$(date +%Y%m%d_%H%M%S).log"
 
 # Check for jq dependency
 if ! command -v jq &> /dev/null; then
@@ -30,6 +38,20 @@ GRAY='\033[0;90m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
 
+# Logging function - outputs to both console and file
+log() {
+  local message="$1"
+  echo -e "$message"
+  # Strip ANSI color codes for log file
+  echo -e "$message" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
+}
+
+log_raw() {
+  local message="$1"
+  echo -ne "$message"
+  echo -ne "$message" >> "$LOG_FILE"
+}
+
 # Function to display context window usage bar
 display_context_bar() {
   local used=$1
@@ -46,10 +68,10 @@ display_context_bar() {
     for ((i=0; i<empty; i++)); do bar+="░"; done
 
     local color=$GREEN
-    if [ $percent -gt 70 ]; then color=$YELLOW; fi
-    if [ $percent -gt 90 ]; then color=$RED; fi
+    if [ $percent -gt $CONTEXT_THRESHOLD ]; then color=$YELLOW; fi
+    if [ $percent -gt 50 ]; then color=$RED; fi
 
-    echo -e "${BOLD}📊 Context Window:${NC} [${color}${bar}${NC}] ${percent}% (${used}/${total} tokens)"
+    log "${BOLD}📊 Context Window:${NC} [${color}${bar}${NC}] ${percent}% (${used}/${total} tokens)"
   fi
 }
 
@@ -97,24 +119,26 @@ if [ -n "$2" ]; then
   MAX_ITERATIONS=$2
 fi
 
-echo ""
-echo -e "${BOLD}${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}${CYAN}║                    🚀 RALPH LOOP                          ║${NC}"
-echo -e "${BOLD}${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
-echo ""
-echo -e "${BOLD}📦 Agent:${NC} $AGENT_CMD"
-echo -e "${BOLD}📂 Working directory:${NC} $(pwd)"
-echo -e "${BOLD}🔄 Max iterations:${NC} $MAX_ITERATIONS"
+log ""
+log "${BOLD}${CYAN}╔═══════════════════════════════════════════════════════════╗${NC}"
+log "${BOLD}${CYAN}║                    🚀 RALPH LOOP                          ║${NC}"
+log "${BOLD}${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
+log ""
+log "${BOLD}📦 Agent:${NC} $AGENT_CMD"
+log "${BOLD}📂 Working directory:${NC} $(pwd)"
+log "${BOLD}🔄 Max iterations:${NC} $MAX_ITERATIONS"
+log "${BOLD}📊 Context threshold:${NC} ${CONTEXT_THRESHOLD}%"
+log "${BOLD}📝 Log file:${NC} $LOG_FILE"
 
 for i in $(seq 1 $MAX_ITERATIONS); do
-  echo ""
-  echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
-  echo -e "${BOLD}  🔄 Iteration $i/$MAX_ITERATIONS${NC}"
-  echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+  log ""
+  log "${BOLD}═══════════════════════════════════════════════════════════${NC}"
+  log "${BOLD}  🔄 Iteration $i/$MAX_ITERATIONS${NC}"
+  log "${BOLD}═══════════════════════════════════════════════════════════${NC}"
 
   PROMPT_CONTENT=$(cat "$SCRIPT_DIR/prompt.md")
 
-  echo -e "\n${BLUE}🤖 Agent running...${NC}"
+  log "\n${BLUE}🤖 Agent running...${NC}"
 
   # Run agent and capture output
   if [[ "$AGENT_NAME" == "claude" ]]; then
@@ -122,7 +146,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     TEMP_OUTPUT=$(mktemp)
     TEMP_TEXT=$(mktemp)
 
-    echo -e "${GRAY}────────────────────────────────────────${NC}"
+    log_raw "${GRAY}────────────────────────────────────────${NC}\n"
 
     # Stream and display output in real-time using process substitution
     # This runs in current shell to avoid subshell variable scope issues
@@ -138,59 +162,75 @@ for i in $(seq 1 $MAX_ITERATIONS); do
             # Extract and display text content
             CONTENT=$(echo "$line" | jq -r '.message.content[]? | select(.type=="text") | .text // empty' 2>/dev/null)
             if [ -n "$CONTENT" ]; then
-              echo -ne "$CONTENT"
-              echo -ne "$CONTENT" >> "$TEMP_TEXT"
+              log_raw "$CONTENT"
             fi
             ;;
           "content_block_delta")
             # Streaming text delta
             DELTA=$(echo "$line" | jq -r '.delta.text // empty' 2>/dev/null)
             if [ -n "$DELTA" ]; then
-              echo -ne "$DELTA"
-              echo -ne "$DELTA" >> "$TEMP_TEXT"
+              log_raw "$DELTA"
             fi
             ;;
           "result")
             # Final result - extract the text
             RESULT_TEXT=$(echo "$line" | jq -r '.result // empty' 2>/dev/null)
             if [ -n "$RESULT_TEXT" ] && [ "$RESULT_TEXT" != "null" ]; then
-              echo -ne "$RESULT_TEXT"
-              echo -ne "$RESULT_TEXT" >> "$TEMP_TEXT"
+              log_raw "$RESULT_TEXT"
             fi
             ;;
         esac
       fi
     done < <(echo "$PROMPT_CONTENT" | $AGENT_CMD 2>/dev/null) || true
 
-    echo ""
-    echo -e "${GRAY}────────────────────────────────────────${NC}"
+    log ""
+    log_raw "${GRAY}────────────────────────────────────────${NC}\n"
 
     # Process final output for metadata
     INPUT_TOKENS=0
     OUTPUT_TOKENS=0
+    CACHE_CREATION_TOKENS=0
+    CACHE_READ_TOKENS=0
     CONTEXT_SIZE=200000
     TOTAL_COST="N/A"
     DURATION=0
+    CONTEXT_EXCEEDED=false
 
     if [ -f "$TEMP_OUTPUT" ]; then
       # Get the last "result" type line for metadata
       RESULT_LINE=$(grep '"type":"result"' "$TEMP_OUTPUT" 2>/dev/null | tail -1 || true)
 
       if [ -n "$RESULT_LINE" ]; then
-        INPUT_TOKENS=$(echo "$RESULT_LINE" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null || echo "0")
-        OUTPUT_TOKENS=$(echo "$RESULT_LINE" | jq -r '.context_window.current_usage.output_tokens // 0' 2>/dev/null || echo "0")
-        CONTEXT_SIZE=$(echo "$RESULT_LINE" | jq -r '.context_window.context_window_size // 200000' 2>/dev/null || echo "200000")
-        TOTAL_COST=$(echo "$RESULT_LINE" | jq -r '.cost_usd // "N/A"' 2>/dev/null || echo "N/A")
+        # Correct JSON paths based on actual Claude CLI output
+        INPUT_TOKENS=$(echo "$RESULT_LINE" | jq -r '.usage.input_tokens // 0' 2>/dev/null || echo "0")
+        OUTPUT_TOKENS=$(echo "$RESULT_LINE" | jq -r '.usage.output_tokens // 0' 2>/dev/null || echo "0")
+        CACHE_CREATION_TOKENS=$(echo "$RESULT_LINE" | jq -r '.usage.cache_creation_input_tokens // 0' 2>/dev/null || echo "0")
+        CACHE_READ_TOKENS=$(echo "$RESULT_LINE" | jq -r '.usage.cache_read_input_tokens // 0' 2>/dev/null || echo "0")
+        CONTEXT_SIZE=$(echo "$RESULT_LINE" | jq -r '.modelUsage | to_entries[0].value.contextWindow // 200000' 2>/dev/null || echo "200000")
+        TOTAL_COST=$(echo "$RESULT_LINE" | jq -r '.total_cost_usd // "N/A"' 2>/dev/null || echo "N/A")
         DURATION=$(echo "$RESULT_LINE" | jq -r '.duration_ms // 0' 2>/dev/null || echo "0")
       fi
 
-      # Display context window usage
-      TOTAL_TOKENS=$((INPUT_TOKENS + OUTPUT_TOKENS))
-      echo ""
+      # Calculate total tokens used (including cache)
+      TOTAL_TOKENS=$((INPUT_TOKENS + CACHE_CREATION_TOKENS + CACHE_READ_TOKENS + OUTPUT_TOKENS))
+
+      # Calculate context usage percentage
+      if [ "$CONTEXT_SIZE" -gt 0 ]; then
+        CONTEXT_PERCENT=$((TOTAL_TOKENS * 100 / CONTEXT_SIZE))
+      else
+        CONTEXT_PERCENT=0
+      fi
+
+      # Check if context threshold exceeded
+      if [ "$CONTEXT_PERCENT" -gt "$CONTEXT_THRESHOLD" ]; then
+        CONTEXT_EXCEEDED=true
+      fi
+
+      log ""
       display_context_bar "$TOTAL_TOKENS" "$CONTEXT_SIZE"
 
       # Display additional stats
-      echo -e "${BOLD}💰 Cost:${NC} \$${TOTAL_COST} | ${BOLD}⏱️ Duration:${NC} ${DURATION}ms | ${BOLD}📤 Output:${NC} ${OUTPUT_TOKENS} tokens"
+      log "${BOLD}💰 Cost:${NC} \$${TOTAL_COST} | ${BOLD}⏱️ Duration:${NC} ${DURATION}ms | ${BOLD}📤 Output:${NC} ${OUTPUT_TOKENS} tokens"
 
       rm -f "$TEMP_OUTPUT"
     fi
@@ -207,16 +247,37 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     OUTPUT=$(echo "$PROMPT_CONTENT" | $AGENT_CMD 2>&1 | tee /dev/stderr) || true
   fi
 
+  # Check completion signal
   if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
-    echo ""
-    echo -e "${BOLD}${GREEN}✅ Done! All stories completed.${NC}"
+    # Check if context threshold was exceeded - if so, force new session
+    if [ "$CONTEXT_EXCEEDED" = true ]; then
+      log ""
+      log "${BOLD}${YELLOW}⚠️ Context window ${CONTEXT_PERCENT}% exceeds threshold (${CONTEXT_THRESHOLD}%)${NC}"
+      log "${BOLD}${YELLOW}🔄 Starting new session to maintain performance...${NC}"
+      sleep 2
+      continue
+    fi
+
+    log ""
+    log "${BOLD}${GREEN}✅ Done! All stories completed.${NC}"
+    log "${BOLD}📝 Log saved to:${NC} $LOG_FILE"
     exit 0
   fi
 
-  echo -e "\n${YELLOW}⏳ Iteration $i finished. Sleeping for 2 seconds...${NC}"
+  # Also check context threshold even without COMPLETE signal
+  if [ "$CONTEXT_EXCEEDED" = true ]; then
+    log ""
+    log "${BOLD}${YELLOW}⚠️ Context window ${CONTEXT_PERCENT}% exceeds threshold (${CONTEXT_THRESHOLD}%)${NC}"
+    log "${BOLD}${YELLOW}🔄 Starting new session to maintain performance...${NC}"
+    sleep 2
+    continue
+  fi
+
+  log "\n${YELLOW}⏳ Iteration $i finished. Sleeping for 2 seconds...${NC}"
   sleep 2
 done
 
-echo ""
-echo -e "${BOLD}${RED}⚠️ Max iterations reached without completion signal.${NC}"
+log ""
+log "${BOLD}${RED}⚠️ Max iterations reached without completion signal.${NC}"
+log "${BOLD}📝 Log saved to:${NC} $LOG_FILE"
 exit 1
