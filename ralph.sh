@@ -3,7 +3,7 @@ set -e
 
 # Configuration
 MAX_ITERATIONS=${MAX_ITERATIONS:-10}
-CONTEXT_THRESHOLD=${CONTEXT_THRESHOLD:-20}  # Context window usage threshold (%)
+CONTEXT_THRESHOLD=${CONTEXT_THRESHOLD:-15}  # Context window usage threshold (%)
 AGENT_NAME="$1"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
