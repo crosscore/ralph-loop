@@ -1,0 +1,15 @@
+{
+	"branchName": "feat/example-feature",
+	"userStories": [
+		{
+			"id": "US-001",
+			"title": "Example Story",
+			"acceptanceCriteria": [
+				"This is an example acceptance criteria"
+			],
+			"priority": 1,
+			"passes": false,
+			"notes": "Replace this with real user stories"
+		}
+	]
+}
