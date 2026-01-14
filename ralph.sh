@@ -10,8 +10,8 @@ ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Agent command mapping
 declare -A AGENTS
-AGENTS["claude"]="claude --permission-mode bypassPermissions"
-AGENTS["gemini"]="gemini --model gemini-3-flash-preview --yolo"
+AGENTS["claude"]="claude --permission-mode bypassPermissions --verbose"
+AGENTS["gemini"]="gemini --model gemini-3-flash-preview --yolo --debug"
 
 if [ -z "$AGENT_NAME" ]; then
   echo "Usage: ./ralph-loop/ralph.sh <agent> [max_iterations]"
